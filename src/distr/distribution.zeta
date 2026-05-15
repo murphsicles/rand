@@ -1,0 +1,148 @@
+// Auto-converted from /tmp/df-rand-0.10.1/rand-0.10.1/src/distr/distribution.rs
+
+use crate::Rng;
+#[cfg(feature = "alloc")] use alloc::string::String;
+use core::iter;
+#[cfg(doc)] use crate::RngExt;
+/// Types(distributions) that can be used to create a random instance of `T`.
+/// 
+/// It is possible to sample from a distribution through both the
+/// `Distribution` and [`RngExt`] traits, via `distr.sample(&mut rng)` and
+/// `rng.sample(distr)`. They also both offer the [`sample_iter`] method, which
+/// produces an iterator that samples from the distribution.
+/// 
+/// All implementations are expected to be immutable; this has the significant
+/// advantage of not needing to consider thread safety, and for most
+/// distributions efficient state-less sampling algorithms are available.
+/// 
+/// Implementations are typically expected to be portable with reproducible
+/// results when used with a PRNG with fixed seed; see the
+/// [portability chapter](https://rust-random.github.io/book/portability.html)
+/// of The Rust Rand Book. In some cases this does not apply, e.g. the `usize`
+/// type requires different sampling on 32-bit and 64-bit machines.
+/// 
+/// [`sample_iter`]: Distribution::sample_iter
+pub trait Distribution<T> {
+ fn sample<R: Rng + Sized>(&self, rng: &mut R) -> T;
+ fn sample_iter<R>(self, rng: R) -> Iter<Self, R, T> where R: Rng, Self: Sized;
+ fn map<F, S>(self, func: F) -> Map<Self, F, T, S> where F: Fn, Self: Sized
+}
+
+impl<T, D: Distribution<T> + Sized> Distribution<T> for &D {
+ fn sample(&self, rng: &mut R) -> T {
+ (*self).sample(rng)
+ }
+ 
+}
+
+/// An iterator over a [`Distribution`]
+/// 
+/// This iterator yields random values of type `T` with distribution `D`
+/// from a random generator of type `R`.
+/// 
+/// Construct this `struct` using [`Distribution::sample_iter`] or
+/// [`RngExt::sample_iter`]. It is also used by [`RngExt::random_iter`] and
+/// [`crate::random_iter`].
+#[derive(Debug)]
+pub struct Iter<D, R, T> {
+ distr: D,
+ rng: R,
+ phantom: core::marker::PhantomData<T>,
+}
+
+impl<D, R, T> Iterator for Iter<D, R, T> where D: Distribution<T>, R: Rng {
+ type Item = T;
+ fn next(&mut self) -> Option<T> {
+ Some(self.distr.sample(&mut self.rng))
+ }
+ 
+ fn size_hint(&self) ->(usize, Option<usize>) {
+ (usize::MAX, None)
+ }
+ 
+}
+
+impl<D, R, T> iter::FusedIterator for Iter<D, R, T> where D: Distribution<T>, R: Rng {
+}
+
+/// A [`Distribution`] which maps sampled values to type `S`
+/// 
+/// This `struct` is created by the [`Distribution::map`] method.
+/// See its documentation for more.
+#[derive(Debug)]
+pub struct Map<D, F, T, S> {
+ distr: D,
+ func: F,
+ phantom: core::marker::PhantomData<_>,
+}
+
+impl<D, F, T, S> Distribution<S> for Map<D, F, T, S> where D: Distribution<T>, F: Fn {
+ fn sample(&self, rng: &mut R) -> S {
+ (self.func)(self.distr.sample(rng))
+ }
+ 
+}
+
+/// Sample or extend a [`String`]
+/// 
+/// Helper methods to extend a [`String`] or sample a new [`String`].
+#[cfg(feature = "alloc")]
+pub trait SampleString {
+ fn append_string<R: Rng + Sized>(&self, rng: &mut R, string: &mut String, len: usize);
+ fn sample_string<R: Rng + Sized>(&self, rng: &mut R, len: usize) -> String
+}
+
+#[cfg(test)]
+mod tests {
+ use crate::Rng;
+ use crate::distr::{ Distribution, Uniform };
+ #[test]
+ fn test_distributions_iter() {
+ use crate::distr::Open01;
+ let mut rng = crate::test::rng(210);
+ let distr = Open01;
+ let mut iter = Distribution::<f32>::sample_iter(distr, &mut rng);
+ let _ = 0.;
+ for _ in 0 .. 100 { sum += iter.next().unwrap(); }
+ assert!(0. < sum &&sum < 100.);
+ }
+ 
+ #[test]
+ fn test_distributions_map() {
+ let dist = Uniform::new_inclusive(0, 5).unwrap().map(| val | val + 15);
+ let mut rng = crate::test::rng(212);
+ let val = dist.sample(&mut rng);
+ assert!((15 ..= 20).contains(&val));
+ }
+ 
+ #[test]
+ fn test_make_an_iter() {
+ fn ten_dice_rolls_other_than_five<R: Rng>(rng: &mut R) -> impl Iterator<_> + _ {
+ Uniform::new_inclusive(1, 6).unwrap().sample_iter(rng).filter(| x | *x != 5).take(10)
+ }
+ 
+ let mut rng = crate::test::rng(211);
+ let mut count = 0;
+ for val in ten_dice_rolls_other_than_five(&mut rng) { assert!((1 ..= 6).contains(&val) &&val != 5); count += 1; }
+ assert_eq!(count, 10);
+ }
+ 
+ #[test]
+ #[cfg(feature = "alloc")]
+ fn test_dist_string() {
+ use crate::distr::{ Alphabetic, Alphanumeric, SampleString, StandardUniform };
+ use core::str;
+ let mut rng = crate::test::rng(213);
+ let s1 = Alphanumeric.sample_string(&mut rng, 20);
+ assert_eq!(s1.len(), 20);
+ assert_eq!(str::from_utf8(s1.as_bytes()), Ok(s1.as_str()));
+ let s2 = StandardUniform.sample_string(&mut rng, 20);
+ assert_eq!(s2.chars().count(), 20);
+ assert_eq!(str::from_utf8(s2.as_bytes()), Ok(s2.as_str()));
+ let s3 = Alphabetic.sample_string(&mut rng, 20);
+ assert_eq!(s3.len(), 20);
+ assert_eq!(str::from_utf8(s3.as_bytes()), Ok(s3.as_str()));
+ }
+ 
+}
+

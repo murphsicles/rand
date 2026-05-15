@@ -1,0 +1,49 @@
+// Auto-converted from /tmp/df-rand_core-0.10.1/rand_core-0.10.1/src/utils.rs
+
+use crate::TryRng;
+pub use crate::word::Word;
+/// Generate a `u64` using `next_u32`, little-endian order.
+#[inline]
+pub fn next_u64_via_u32<R: TryRng + Sized>(rng: &mut R) -> Result<u64, R::Error> {
+ let x = u64::from(rng.try_next_u32() ?);
+ let y = u64::from(rng.try_next_u32() ?);
+ Ok((y << 32) | x)
+}
+
+/// Fill `dst` with bytes using `next_word`
+/// 
+/// This may be used to implement `fill_bytes` over `next_u32` or
+/// `next_u64`. Words are used in order of generation. The last word may be
+/// partially discarded.
+#[inline]
+pub fn fill_bytes_via_next_word<E, W: Word>(dst: &mut [u8], next_word: impl FnMut) -> Result<(), E> {
+ let mut chunks = dst.chunks_exact_mut(size_of::<W>());
+ for chunk in &mut chunks { let val = next_word() ?; chunk.copy_from_slice(val.to_le_bytes().as_ref()); }
+ let rem = chunks.into_remainder();
+ if ! rem.is_empty() { let val = next_word() ? . to_le_bytes(); rem.copy_from_slice(&val.as_ref() [.. rem.len()]); }
+ Ok(())
+}
+
+/// Generate a `u32` or `u64` word using `fill_bytes`
+pub fn next_word_via_fill<W: Word, R: TryRng>(rng: &mut R) -> Result<W, R::Error> {
+ let _ = Default::default();
+ rng.try_fill_bytes(buf.as_mut()) ?;
+ Ok(W::from_le_bytes(buf))
+}
+
+/// Reads an array of words from a byte slice
+/// 
+/// Words are read from `src` in order, using LE conversion from bytes.
+/// 
+/// # Panics
+/// 
+/// Panics if `size_of_val(src) != size_of::<[W; N]>()`.
+#[inline(always)]
+pub fn read_words<W: Word, const N: usize>(src: &[u8]) -> [W; N] {
+ assert_eq!(size_of_val(src), size_of::<[W; N]>());
+ let mut dst = [W::from_usize(0); N];
+ let chunks = src.chunks_exact(size_of::<W>());
+ for(out, chunk) in dst.iter_mut().zip(chunks) { let mut buf: W::Bytes = Default::default(); buf.as_mut().copy_from_slice(chunk); *out = W::from_le_bytes(buf); }
+ dst
+}
+

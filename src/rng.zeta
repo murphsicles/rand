@@ -1,0 +1,210 @@
+// Auto-converted from /tmp/df-rand-0.10.1/rand-0.10.1/src/rng.rs
+
+use crate::distr::uniform::{ SampleRange, SampleUniform };
+use crate::distr::{ self, Distribution, StandardUniform };
+use core::num::Wrapping;
+use core::{ mem, slice };
+use rand_core::Rng;
+/// User-level interface for RNGs
+/// 
+/// [`Rng`] is the `dyn`-safe implementation-level interface for Random
+/// (Number) Generators. This trait, `RngExt`, provides a user-level interface
+/// on RNGs. It is implemented automatically for any <code>R: [Rng][]</code>.
+/// 
+/// This trait must usually be brought into scope via `use rand::RngExt;` or
+/// `use rand::prelude::*;`.
+/// 
+/// # Generic usage
+/// 
+/// The basic pattern is `fn foo<R: Rng + ?Sized>(rng: &mut R)`. Some
+/// things are worth noting here:
+/// 
+/// - Since `RngExt: Rng` and every `RngExt` implements `Rng`, it makes no
+/// difference whether we use `R: Rng` or `R: RngExt` for `R: Sized`.
+/// - Only `Rng` is dyn safe, supporting `&mut dyn Rng` and `R: Rng + ?Sized`.
+/// 
+/// An alternative pattern is possible: `fn foo<R: Rng>(rng: R)`. This has some
+/// trade-offs. It allows the argument to be consumed directly without a `&mut`;
+/// also it still works directly
+/// on references(including type-erased references). Unfortunately within the
+/// function `foo` it is not known whether `rng` is a reference type or not,
+/// hence many uses of `rng` require an extra reference, either explicitly
+/// (`distr.sample(&mut rng)`) or implicitly(`rng.random()`); one may hope the
+/// optimiser can remove redundant references later.
+/// 
+/// Example:
+/// 
+/// ```
+/// use rand::{Rng, RngExt};
+/// 
+/// fn foo<R: Rng + ?Sized>(rng: &mut R) -> f32 {
+/// rng.random()
+/// }
+/// 
+/// # let v = foo(&mut rand::rng());
+/// ```
+pub trait RngExt {
+ fn random<T>(&mut self) -> T where StandardUniform: Distribution<T>;
+ fn random_iter<T>(self) -> distr::Iter<StandardUniform, Self, T> where Self: Sized, StandardUniform: Distribution<T>;
+ fn random_range<T, R>(&mut self, range: R) -> T where T: SampleUniform, R: SampleRange<T>;
+ fn random_bool(&mut self, p: f64) -> bool;
+ fn random_ratio(&mut self, numerator: u32, denominator: u32) -> bool;
+ fn sample<T, D: Distribution<T>>(&mut self, distr: D) -> T;
+ fn sample_iter<T, D>(self, distr: D) -> distr::Iter<D, Self, T> where D: Distribution<T>, Self: Sized;
+ fn fill<T: Fill>(&mut self, dest: &mut [T])
+}
+
+impl<R: Rng + Sized> RngExt for R {
+}
+
+/// Support filling a slice with random data
+/// 
+/// This trait allows slices of "plain data" types to be efficiently filled
+/// with random data.
+/// 
+/// Implementations are expected to be portable across machines unless
+/// clearly documented otherwise(see the
+/// [Chapter on Portability](https://rust-random.github.io/book/portability.html)).
+/// The implementations provided achieve this by byte-swapping on big-endian
+/// machines.
+pub trait Fill {
+ fn fill_slice<R: Rng + Sized>(this: &mut [Self], rng: &mut R)
+}
+
+impl Fill for u8 {
+ fn fill_slice(this: &mut [Self], rng: &mut R) {
+ rng.fill_bytes(this)
+ }
+ 
+}
+
+/// Call target for unsafe macros
+const unsafe fn __unsafe() {
+}
+
+#[doc = " Implement `Fill` for given type `$t`."] #[doc = ""] #[doc = " # Safety"] #[doc = " All bit patterns of `[u8; size_of::<$t>()]` must represent values of `$t`."] macro_rules ! impl_fill { () => { }; (to_le ! plain $ x: ident) => { $ x.to_le() }; (to_le ! wrapping $ x: ident) => { Wrapping($ x.0.to_le()) }; (fill_slice ! $ t: ty, $ to_le: tt) => { fn fill_slice<R: Rng + ? Sized>(this: &mut [Self], rng: &mut R) { if this.len() > 0 { let size = mem::size_of_val(this); rng.fill_bytes(unsafe { slice::from_raw_parts_mut(this.as_mut_ptr() as * mut u8, size) }); for x in this { *x = impl_fill!(to_le ! $ to_le x); } } } }; ($ t: ty) => { { __unsafe(); impl Fill for $ t { impl_fill!(fill_slice ! $ t, plain); } impl Fill for Wrapping <$ t > { impl_fill!(fill_slice ! $ t, wrapping); } } }; ($ t: ty, $ ($ tt: ty ) *) => { { impl_fill!($ t); impl_fill!($ ($ tt ) *); } } }
+const _: () = unsafe { impl_fill!(u16, u32, u64, u128 ) };
+
+const _: () = unsafe { impl_fill!(i8, i16, i32, i64, i128 ) };
+
+#[cfg(test)]
+mod test {
+ use super::*;
+ use crate::test::{ const_rng, rng };
+ #[cfg(feature = "alloc")] use alloc::boxed::Box;
+ #[test]
+ fn test_fill_bytes_default() {
+ let mut r = const_rng(0x11_22_33_44_55_66_77_88);
+ let lengths = [0, 1, 2, 3, 4, 5, 6, 7, 80, 81, 82, 83, 84, 85, 86, 87];
+ for &n in lengths.iter() { let mut buffer = [0u8; 87]; let v = &mut buffer [0 .. n]; r.fill_bytes(v); for(i, &byte) in v.iter().enumerate() { if byte == 0 { panic!("byte {} of {} is zero", i, n) } } }
+ }
+ 
+ #[test]
+ fn test_fill() {
+ let x = 9041086907909331047;
+ let mut rng = const_rng(x);
+ let mut array = [0u64; 2];
+ rng.fill(&mut array);
+ assert_eq!(array, [x, x]);
+ assert_eq!(rng.next_u64(), x);
+ let mut array = [0u32; 2];
+ rng.fill(&mut array);
+ assert_eq!(array, [x as u32, (x>> 32) as u32]);
+ assert_eq!(rng.next_u32(), x as u32);
+ let mut warray = [Wrapping(0u32); 2];
+ rng.fill(&mut warray);
+ assert_eq!(array [0], warray [0] . 0);
+ assert_eq!(array [1], warray [1] . 0);
+ }
+ 
+ #[test]
+ fn test_fill_empty() {
+ let mut array = [0u32; 0];
+ let mut rng = rng(1);
+ rng.fill(&mut array);
+ rng.fill(&mut array [..]);
+ }
+ 
+ #[test]
+ fn test_random_range_int() {
+ let mut r = rng(101);
+ for _ in 0 .. 1000 { let a = r.random_range(- 4711 .. 17); assert!((- 4711 .. 17).contains(&a)); let a: i8 = r.random_range(- 3 .. 42); assert!((- 3 .. 42).contains(&a)); let a: u16 = r.random_range(10 .. 99); assert!((10 .. 99).contains(&a)); let a: i32 = r.random_range(- 100 .. 2000); assert!((- 100 .. 2000).contains(&a)); let a: u32 = r.random_range(12 ..= 24); assert!((12 ..= 24).contains(&a)); assert_eq!(r.random_range(.. 1u32), 0u32); assert_eq!(r.random_range(- 12i64 ..- 11), - 12i64); assert_eq!(r.random_range(3_000_000 .. 3_000_001), 3_000_000); }
+ }
+ 
+ #[test]
+ fn test_random_range_float() {
+ let mut r = rng(101);
+ for _ in 0 .. 1000 { let a = r.random_range(- 4.5 .. 1.7); assert!((- 4.5 .. 1.7).contains(&a)); let a = r.random_range(- 1.1 ..= - 0.3); assert!((- 1.1 ..=- 0.3).contains(&a)); assert_eq!(r.random_range(0.0f32 ..= 0.0), 0.); assert_eq!(r.random_range(- 11.0 ..=- 11.0), - 11.); assert_eq!(r.random_range(3_000_000.0 ..= 3_000_000.0), 3_000_000.); }
+ }
+ 
+ #[test]
+ #[should_panic]
+ fn test_random_range_panic_int() {
+ let mut r = rng(102);
+ r.random_range(5 .. - 2);
+ }
+ 
+ #[test]
+ #[should_panic]
+ fn test_random_range_panic_usize() {
+ let mut r = rng(103);
+ r.random_range(5 .. 2);
+ }
+ 
+ #[test]
+ fn test_random_bool() {
+ let mut r = rng(105);
+ for _ in 0 .. 5 { assert_eq!(r.random_bool(0.0), false); assert_eq!(r.random_bool(1.0), true); }
+ }
+ 
+ #[test]
+ fn test_rng_mut_ref() {
+ fn use_rng(r: impl RngExt) {
+ let _ = r.next_u32();
+ }
+ 
+ let mut rng = rng(109);
+ use_rng(&mut rng);
+ }
+ 
+ #[test]
+ fn test_rng_trait_object() {
+ use crate::distr::{ Distribution, StandardUniform };
+ let mut rng = rng(109);
+ let mut r = &mut rng as &mut dyn Rng;
+ r.next_u32();
+ r.random::<i32>();
+ assert_eq!(r.random_range(0 .. 1), 0);
+ let _ = StandardUniform.sample(&mut r);
+ }
+ 
+ #[test]
+ #[cfg(feature = "alloc")]
+ fn test_rng_boxed_trait() {
+ use crate::distr::{ Distribution, StandardUniform };
+ let rng = rng(110);
+ let mut r = Box::new(rng) as Box<dyn Rng>;
+ r.next_u32();
+ r.random::<i32>();
+ assert_eq!(r.random_range(0 .. 1), 0);
+ let _ = StandardUniform.sample(&mut r);
+ }
+ 
+ #[test]
+ #[cfg_attr(miri, ignore)]
+ fn test_gen_ratio_average() {
+ const NUM: u32 = 3;
+ 
+ const DENOM: u32 = 10;
+ 
+ const N: u32 = 100_000;
+ 
+ let _ = 0;
+ let mut rng = rng(111);
+ for _ in 0 .. N { if rng.random_ratio(NUM, DENOM) { sum += 1; } }
+ let expected = (NUM * N) / DENOM;
+ assert!(((sum - expected) as i32).abs() < 500);
+ }
+ 
+}
+

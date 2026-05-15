@@ -1,0 +1,115 @@
+// Auto-converted from /tmp/df-rand_core-0.10.1/rand_core-0.10.1/src/block.rs
+
+use crate::utils::Word;
+use core::fmt;
+/// A random(block) generator
+pub trait Generator {
+ type Output;
+ fn generate(&mut self, output: &mut Self::Output);
+ fn drop(&mut self, output: &mut Self::Output)
+}
+
+/// RNG functionality for a block [`Generator`]
+/// 
+/// This type encompasses a [`Generator`] [`core`](Self::core) and a buffer.
+/// It provides optimized implementations of methods required by an [`Rng`].
+/// 
+/// All values are consumed in-order of generation. No whole words(e.g. `u32`
+/// or `u64`) are discarded, though where a word is partially used(e.g. for a
+/// byte-fill whose length is not a multiple of the word size) the rest of the
+/// word is discarded.
+/// 
+/// [`Rng`]: crate::Rng
+#[derive(Clone)]
+pub struct BlockRng<G: Generator> {
+ results: G::Output,
+ pub core: G,
+}
+
+impl<G> fmt::Debug for BlockRng<G> where G: Generator + fmt::Debug {
+ fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+ fmt.debug_struct("BlockRng").field("core", &self.core).finish_non_exhaustive()
+ }
+ 
+}
+
+impl<G: Generator> Drop for BlockRng<G> {
+ fn drop(&mut self) {
+ self.core.drop(&mut self.results);
+ }
+ 
+}
+
+impl<W: Word + Default, const N: usize, G: Generator<_>> BlockRng<G> {
+ pub fn new(core: G) -> BlockRng<G> {
+ let mut results = [W::default(); N];
+ results [0] = W::from_usize(N);
+ BlockRng { core, results }
+ }
+ 
+ pub fn reconstruct(core: G, remaining_results: &[W]) -> Option<Self> {
+ let mut results = [W::default(); N];
+ if remaining_results.len() < N { let index = N - remaining_results.len(); results [index ..] . copy_from_slice(remaining_results); results [0] = W::from_usize(index); Some(BlockRng { results, core }) } else { None }
+ }
+ 
+}
+
+impl<W: Word, const N: usize, G: Generator<_>> BlockRng<G> {
+ fn index(&self) -> usize {
+ self.results [0] . into_usize()
+ }
+ 
+ fn set_index(&mut self, index: usize) {
+ debug_assert!(0 < index &&index <= N);
+ self.results [0] = W::from_usize(index);
+ }
+ 
+ pub fn reset_and_skip(&mut self, n: usize) {
+ if n == 0 { self.set_index(N); return; }
+ assert!(n<N);
+ self.core.generate(&mut self.results);
+ self.set_index(n);
+ }
+ 
+ pub fn word_offset(&self) -> usize {
+ let index = self.index();
+ if index >= N { 0 } else { index }
+ }
+ 
+ pub fn remaining_results(&self) -> &[W] {
+ let index = self.index();
+ &self.results [index ..]
+ }
+ 
+ pub fn next_word(&mut self) -> W {
+ let mut index = self.index();
+ if index >= N { self.core.generate(&mut self.results); index = 0; }
+ let value = self.results [index];
+ self.set_index(index + 1);
+ value
+ }
+ 
+}
+
+impl<const N: usize, G: Generator<_>> BlockRng<G> {
+ pub fn next_u64_from_u32(&mut self) -> u64 {
+ let index = self.index();
+ let mut new_index;
+ let _;
+ if index<N - 1 { lo = self.results [index]; hi = self.results [index + 1]; new_index = index + 2; } else { lo = self.results [N - 1]; self.core.generate(&mut self.results); hi = self.results [0]; new_index = 1; if index>= N { lo = hi; hi = self.results [1]; new_index = 2; } }
+ self.set_index(new_index);
+ (u64::from(hi) << 32) | u64::from(lo)
+ }
+ 
+}
+
+impl<W: Word, const N: usize, G: Generator<_>> BlockRng<G> {
+ pub fn fill_bytes(&mut self, dest: &mut [u8]) {
+ let mut read_len = 0;
+ let mut index = self.index();
+ while read_len<dest.len() { if index>= N { self.core.generate(&mut self.results); index = 0; } let size = core::mem::size_of::<W>(); let mut chunks = dest [read_len ..] . chunks_exact_mut(size); let mut src = self.results [index ..] . iter(); let zipped = chunks.by_ref().zip(src.by_ref()); let num_chunks = zipped.len(); zipped.for_each(| (chunk, src) | chunk.copy_from_slice(src.to_le_bytes().as_ref())); index += num_chunks; read_len += num_chunks * size; if let Some(src) = src.next() { let dest_rem = chunks.into_remainder(); let n = dest_rem.len(); if n > 0 { dest_rem.copy_from_slice(&src.to_le_bytes().as_ref() [.. n]); index += 1; debug_assert_eq!(read_len + n, dest.len()); } break; } }
+ self.set_index(index);
+ }
+ 
+}
+

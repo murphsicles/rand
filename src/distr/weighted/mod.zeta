@@ -1,0 +1,42 @@
+// Auto-converted from /tmp/df-rand-0.10.1/rand-0.10.1/src/distr/weighted/mod.rs
+
+use core::fmt;
+mod weighted_index;
+pub use weighted_index::WeightedIndex;
+/// Bounds on a weight
+/// 
+/// See usage in [`WeightedIndex`].
+pub trait Weight {
+ const ZERO: Self;
+ fn checked_add_assign(&mut self, v: &Self) -> Result<(), ()>
+}
+
+macro_rules ! impl_weight_int { ($ t: ty) => { impl Weight for $ t { const ZERO: Self = 0; fn checked_add_assign(&mut self, v: &Self) -> Result<(), ()> { match self.checked_add(*v) { Some(sum) => { *self = sum; Ok(()) } None => Err(()) } } } }; ($ t: ty, $ ($ tt: ty) ,*) => { impl_weight_int!($ t); impl_weight_int!($ ($ tt) ,*); } }
+impl_weight_int!(i8, i16, i32, i64, i128, isize);
+impl_weight_int!(u8, u16, u32, u64, u128, usize);
+macro_rules ! impl_weight_float { ($ t: ty) => { impl Weight for $ t { const ZERO: Self = 0.0; fn checked_add_assign(&mut self, v: &Self) -> Result<(), ()> { *self += *v; Ok(()) } } }; }
+impl_weight_float!(f32);
+impl_weight_float!(f64);
+/// Invalid weight errors
+/// 
+/// This type represents errors from [`WeightedIndex::new`],
+/// [`WeightedIndex::update_weights`] and other weighted distributions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Error {
+ InvalidInput,
+ InvalidWeight,
+ InsufficientNonZero,
+ Overflow,
+}
+
+impl core::error::Error for Error {
+}
+
+impl fmt::Display for Error {
+ fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+ f.write_str(match * self { Error::InvalidInput => "Weights sequence is empty/too long/unordered", Error::InvalidWeight => "A weight is negative, too large or not a valid number", Error::InsufficientNonZero => "Not enough weights > zero", Error::Overflow => "Overflow when summing weights" })
+ }
+ 
+}
+
